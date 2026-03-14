@@ -4,22 +4,7 @@
 
 Type `push` instead of `git push` twice? CMD-Watch interrupts with a clean prompt, suggests the right command, and with a single keypress writes a permanent alias to your `.zshrc`. No configuration needed.
 
-```
-➜ push origin main
-zsh: command not found: push
-➜ push origin main
-
-  ⚡ cmdwatch
-  push not found — 2nd time you've typed this
-
-  did you mean?
-  [1] git push origin main
-
-  [1-1] alias it   [a] custom alias   [s] skip   [n] never
-
-  ✓  alias push='git push origin main'
-  Saved to ~/.zshrc · active right now.
-```
+![CMD-Watch demo](demo.gif)
 
 ---
 
