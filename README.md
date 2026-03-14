@@ -51,8 +51,8 @@ Aliases are written directly to your `.zshrc` under a `# cmdwatch aliases` secti
 ## `cmdwatch` command
 
 ```sh
-cmdwatch              # same as cmdwatch stats
-cmdwatch stats        # show aliases, miss counts, and ignored commands
+cmdwatch                            # same as cmdwatch stats
+cmdwatch stats                      # show aliases, miss counts, and ignored commands
 cmdwatch add [<cmd> [<expansion>]]  # manually create an alias
 cmdwatch remove <cmd>               # remove an alias and resume tracking
 cmdwatch unignore <cmd>             # resume watching a silenced command
@@ -67,7 +67,7 @@ cmdwatch help                       # show all subcommands
 Set these in your `.zshrc` **before** sourcing `cmdwatch.zsh`:
 
 ```zsh
-CMDWATCH_THRESHOLD=3   # misses before prompting (default: 2)
+CMDWATCH_THRESHOLD=3             # misses before prompting (default: 2)
 CMDWATCH_DIR=~/.cmdwatch         # where counts and state are stored
 CMDWATCH_ZSHRC=~/.zshrc          # which file aliases are written to
 ```
@@ -103,4 +103,4 @@ CMD-Watch fills a different niche: it watches for *patterns* in failed commands 
 
 ## Contributing
 
-Issues and PRs welcome. The entire tool is a single `cmdwatch.zsh` file — easy to read and hack on.
+Issues and PRs welcome. The entire tool is a single `cmdwatch.zsh` file — easy to read and expand on.
