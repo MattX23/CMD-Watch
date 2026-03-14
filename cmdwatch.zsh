@@ -195,6 +195,14 @@ _cw_alias_wizard() {
 command_not_found_handler() {
     local cmd="$1"
 
+    # Only track commands typed directly at the prompt.
+    # If funcstack has more than one entry, this command was invoked by a
+    # script or shell function — not the user. Pass through silently.
+    if (( ${#funcstack} > 1 )); then
+        printf 'zsh: command not found: %s\n' "$cmd" >&2
+        return 127
+    fi
+
     _cw_ensure_dir
 
     # Silently pass through if on the ignore list
