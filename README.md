@@ -61,6 +61,35 @@ cmdwatch reset-all                  # wipe all aliases, counts, and ignored comm
 cmdwatch help                       # show all subcommands
 ```
 
+### What `remove` does
+
+`cmdwatch remove push` does all of this in one step:
+- Removes `alias push='...'` from the `# cmdwatch aliases` section of your `.zshrc`
+- Unaliases it in the current session immediately
+- Clears the miss count so cmdwatch starts tracking from zero again
+- Removes it from the ignored list (if you had previously pressed `n`)
+
+After running it, typing `push` will behave as if cmdwatch had never seen it.
+
+### What `reset-all` does
+
+Wipes everything cmdwatch has written — use this for a clean slate:
+- Removes all aliases from the `# cmdwatch aliases` section of your `.zshrc`
+- Unaliases them in the current session
+- Deletes all miss counts and the ignored list
+
+Asks for confirmation before doing anything.
+
+### Your `.zshrc` is safe
+
+CMD-Watch only ever touches lines inside the `# cmdwatch aliases` section it creates. Your own aliases and config above or below that block are never modified.
+
+Before any write (`add`, `remove`, `reset-all`), a backup of your `.zshrc` is saved to `~/.cmdwatch/zshrc.bak`. To restore it manually:
+
+```sh
+cp ~/.cmdwatch/zshrc.bak ~/.zshrc
+```
+
 ---
 
 ## Configuration
@@ -82,7 +111,8 @@ All state lives in `~/.cmdwatch/`:
 | File | Contents |
 |------|----------|
 | `count_<cmd>` | Miss count for that command |
-| `ignored` | Commands the user explicitly silenced with `n` |
+| `ignored` | Commands silenced with `n` — never prompted again |
+| `zshrc.bak` | Backup of `.zshrc` taken before the last write operation |
 
 ---
 
