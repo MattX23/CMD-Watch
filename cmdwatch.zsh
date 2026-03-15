@@ -40,6 +40,20 @@ _cw_bump_count() {
 _cw_is_ignored() { grep -qxF "$1" "$_cw_ignored" 2>/dev/null; }
 _cw_add_ignore()  { echo "$1" >> "$_cw_ignored"; }
 
+# ── Alias writer (prevents duplicates) ────────────────────────────────────────
+# Removes any existing cmdwatch alias for $1 before appending the new one.
+_cw_write_alias() {
+    local cmd="$1" expansion="$2"
+    if ! grep -qF '# cmdwatch aliases' "$CMDWATCH_ZSHRC" 2>/dev/null; then
+        printf '\n# cmdwatch aliases\n' >> "$CMDWATCH_ZSHRC"
+    fi
+    # Strip any pre-existing line(s) for this command before re-adding
+    local tmp="${CMDWATCH_ZSHRC}.cmdwatch.tmp.$$"
+    grep -v "^alias ${cmd}='" "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
+        && mv -- "$tmp" "$CMDWATCH_ZSHRC" || rm -f "$tmp"
+    printf "alias %s='%s'\n" "$cmd" "$expansion" >> "$CMDWATCH_ZSHRC"
+}
+
 # ── "Did you mean?" suggestions ───────────────────────────────────────────────
 _cw_git_cmds=(
     add am apply archive bisect blame branch bundle checkout cherry-pick
@@ -147,8 +161,8 @@ _cw_show_ui() {
 
 # ── Alias creation wizard ─────────────────────────────────────────────────────
 _cw_alias_wizard() {
-    local cmd="$1"
-    shift
+    local cmd="$1" orig_args="$2"
+    shift 2
     local -a suggestions=("$@")
 
     printf '\n' >/dev/tty
@@ -163,11 +177,17 @@ _cw_alias_wizard() {
     local choice
     read -r choice </dev/tty
 
-    local expansion=""
+    local expansion="" run_expansion=""
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#suggestions[@]} )); then
         expansion="${suggestions[$choice]}"
+        # Strip user's original args so the alias is a bare command, not branch-specific.
+        # e.g. "git merge main" → alias merge='git merge', auto-run "git merge main"
+        [[ -n "$orig_args" && "$expansion" == *" ${orig_args}" ]] && \
+            expansion="${expansion% ${orig_args}}"
+        run_expansion="${expansion}${orig_args:+ ${orig_args}}"
     else
         expansion="$choice"
+        run_expansion="$expansion"
     fi
 
     if [[ -z "$expansion" ]]; then
@@ -175,17 +195,11 @@ _cw_alias_wizard() {
         return
     fi
 
-    # Append to .zshrc under a labelled section
-    if ! grep -qF '# cmdwatch aliases' "$CMDWATCH_ZSHRC" 2>/dev/null; then
-        printf '\n# cmdwatch aliases\n' >> "$CMDWATCH_ZSHRC"
-    fi
-    printf "alias %s='%s'\n" "$cmd" "$expansion" >> "$CMDWATCH_ZSHRC"
+    _cw_write_alias "$cmd" "$expansion"
 
-    # Activate in the current session immediately (direct alias, no eval quoting issues)
-    alias -- "${cmd}=${expansion}"
-
-    # Ignore this command from now on — the alias handles it
-    _cw_add_ignore "$cmd"
+    # Activate in the current session immediately
+    aliases[$cmd]="$expansion"
+    _cw_run_expansion="$run_expansion"
 
     printf '\n  \e[1;32m✓\e[0m  \e[1malias %s='"'"'%s'"'"'\e[0m\n' "$cmd" "$expansion" >/dev/tty
     printf '  \e[2mSaved to %s · active right now.\e[0m\n\n' "$CMDWATCH_ZSHRC" >/dev/tty
@@ -194,6 +208,7 @@ _cw_alias_wizard() {
 # ── Main handler ──────────────────────────────────────────────────────────────
 command_not_found_handler() {
     local cmd="$1"
+    local orig_args="${*:2}"   # args the user typed after the command, e.g. "origin main"
 
     # Only track commands typed directly at the prompt.
     # If funcstack has more than one entry, this command was invoked by a
@@ -205,7 +220,16 @@ command_not_found_handler() {
 
     _cw_ensure_dir
 
-    # Silently pass through if on the ignore list
+    # If a cmdwatch alias for this command exists in .zshrc, it was aliased in a
+    # previous session but isn't loaded yet. Pass through — don't re-prompt.
+    # Importantly, if the user manually removes the alias from .zshrc, this check
+    # fails and cmdwatch resumes tracking automatically.
+    if grep -qF "alias ${cmd}=" "$CMDWATCH_ZSHRC" 2>/dev/null; then
+        printf 'zsh: command not found: %s\n' "$cmd" >&2
+        return 127
+    fi
+
+    # Silently pass through if the user has asked to never be prompted (pressed 'n')
     if _cw_is_ignored "$cmd"; then
         printf 'zsh: command not found: %s\n' "$cmd" >&2
         return 127
@@ -228,7 +252,7 @@ command_not_found_handler() {
 
     _cw_show_ui "$cmd" "$count" "${suggestions[@]}"
 
-    local key
+    local key _cw_run_expansion=""
     read -rk1 key </dev/tty
 
     case "$key" in
@@ -237,21 +261,23 @@ command_not_found_handler() {
             local idx=$(( key ))
             if (( idx >= 1 && idx <= ${#suggestions[@]} )); then
                 local expansion="${suggestions[$idx]}"
+                # Alias should be the bare command — strip the user's original args.
+                # e.g. "git merge main" → alias merge='git merge', then auto-run with "main"
+                local alias_expansion="$expansion"
+                [[ -n "$orig_args" && "$expansion" == *" ${orig_args}" ]] && \
+                    alias_expansion="${expansion% ${orig_args}}"
                 printf '\n' >/dev/tty
-                if ! grep -qF '# cmdwatch aliases' "$CMDWATCH_ZSHRC" 2>/dev/null; then
-                    printf '\n# cmdwatch aliases\n' >> "$CMDWATCH_ZSHRC"
-                fi
-                printf "alias %s='%s'\n" "$cmd" "$expansion" >> "$CMDWATCH_ZSHRC"
-                alias -- "${cmd}=${expansion}"
-                _cw_add_ignore "$cmd"
-                printf '  \e[1;32m✓\e[0m  \e[1malias %s='"'"'%s'"'"'\e[0m\n' "$cmd" "$expansion" >/dev/tty
+                _cw_write_alias "$cmd" "$alias_expansion"
+                aliases[$cmd]="$alias_expansion"
+                _cw_run_expansion="$expansion"   # auto-run uses the full original invocation
+                printf '  \e[1;32m✓\e[0m  \e[1malias %s='"'"'%s'"'"'\e[0m\n' "$cmd" "$alias_expansion" >/dev/tty
                 printf '  \e[2mSaved to %s · active right now.\e[0m\n\n' "$CMDWATCH_ZSHRC" >/dev/tty
             else
                 printf '\n  \e[2m(skipped)\e[0m\n\n' >/dev/tty
             fi
             ;;
         a|A)
-            _cw_alias_wizard "$cmd" "${suggestions[@]}"
+            _cw_alias_wizard "$cmd" "$orig_args" "${suggestions[@]}"
             ;;
         n|N)
             _cw_add_ignore "$cmd"
@@ -263,6 +289,10 @@ command_not_found_handler() {
             ;;
     esac
 
+    if [[ -n "$_cw_run_expansion" ]]; then
+        eval "$_cw_run_expansion"
+        return $?
+    fi
     return 127
 }
 
@@ -281,10 +311,6 @@ cmdwatch() {
             if [[ -n "$aliases" ]]; then
                 while IFS= read -r line; do
                     printf '  \e[32m✓\e[0m  \e[1m%s\e[0m\n' "$line"
-                    # Extract the alias name and ensure it's in the ignore list
-                    local aname="${line#alias }"
-                    aname="${aname%%=*}"
-                    _cw_is_ignored "$aname" || _cw_add_ignore "$aname"
                 done <<< "$aliases"
             else
                 printf '  \e[2m  none yet\e[0m\n'
@@ -354,12 +380,8 @@ cmdwatch() {
             fi
             [[ -z "$expansion" ]] && { printf 'cmdwatch: expansion required\n' >&2; return 1; }
 
-            if ! grep -qF '# cmdwatch aliases' "$CMDWATCH_ZSHRC" 2>/dev/null; then
-                printf '\n# cmdwatch aliases\n' >> "$CMDWATCH_ZSHRC"
-            fi
-            printf "alias %s='%s'\n" "$cmd" "$expansion" >> "$CMDWATCH_ZSHRC"
-            alias -- "${cmd}=${expansion}"
-            _cw_add_ignore "$cmd"
+            _cw_write_alias "$cmd" "$expansion"
+            aliases[$cmd]="$expansion"
             printf '  \e[1;32m✓\e[0m  \e[1malias %s='"'"'%s'"'"'\e[0m  \e[2m(active now)\e[0m\n' "$cmd" "$expansion"
             ;;
 
@@ -391,6 +413,36 @@ cmdwatch() {
             printf '  \e[1;32m✓\e[0m  Removed alias for \e[1m%s\e[0m — cmdwatch will track it again\n' "$cmd"
             ;;
 
+        reset-all)
+            printf '\n  \e[1;35m⚡ cmdwatch\e[0m  \e[31mThis will remove all aliases, counts, and ignored commands.\e[0m\n'
+            printf '  Are you sure? \e[2m[y/N]\e[0m '
+            local yn
+            read -rk1 yn
+            printf '\n'
+            if [[ "$yn" != y && "$yn" != Y ]]; then
+                printf '  \e[2m(cancelled)\e[0m\n\n'
+                return 0
+            fi
+
+            # Unalias everything from the cmdwatch section in .zshrc
+            local line aname
+            while IFS= read -r line; do
+                aname="${line#alias }"; aname="${aname%%=*}"
+                unalias "$aname" 2>/dev/null || true
+            done < <(awk '/# cmdwatch aliases/{found=1; next} found && /^alias /{print}' "$CMDWATCH_ZSHRC" 2>/dev/null)
+
+            # Remove the cmdwatch aliases section from .zshrc
+            local tmp="${CMDWATCH_ZSHRC}.cmdwatch.tmp.$$"
+            awk '/# cmdwatch aliases/{found=1} found && /^$/{found=0; next} !found' \
+                "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
+                && mv -- "$tmp" "$CMDWATCH_ZSHRC" || rm -f "$tmp"
+
+            # Wipe the state directory
+            rm -f "${CMDWATCH_DIR}"/count_* "$_cw_ignored"
+
+            printf '  \e[1;32m✓\e[0m  All cmdwatch data cleared.\n\n'
+            ;;
+
         help|--help|-h|h)
             printf '\n  \e[1;35m⚡ cmdwatch\e[0m\n\n'
             printf '  \e[1mUsage:\e[0m  cmdwatch <subcommand>\n\n'
@@ -400,6 +452,7 @@ cmdwatch() {
             printf '  \e[1mremove\e[0m <cmd>              Remove an alias and start tracking the command again\n'
             printf '  \e[1munignore\e[0m <cmd>            Resume watching a silenced command (no alias)\n'
             printf '  \e[1mreset\e[0m <cmd>               Reset the miss count for a command\n'
+            printf '  \e[1mreset-all\e[0m                 Wipe all aliases, counts, and ignored commands\n'
             printf '  \e[1mhelp\e[0m                     Show this help\n'
             printf '\n'
             ;;

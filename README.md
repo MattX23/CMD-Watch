@@ -30,10 +30,10 @@ CMD-Watch hooks into zsh's built-in `command_not_found_handler` — called autom
 
 **"Did you mean?" suggestions come from:**
 - Git subcommands — `push` → `git push`, `check` → `git checkout`
-- Args you typed — `push origin main` → `git push origin main`
+- Args you typed — shown in the prompt for context, but the saved alias is always the bare command. `merge main` → shown as `git merge main`, saved as `alias merge='git merge'` so it works with any branch later.
 - npm/yarn scripts — if a `package.json` exists in the current directory tree
 
-Aliases are written directly to your `.zshrc` under a `# cmdwatch aliases` section and activated immediately in the current session — no need to open a new terminal.
+Aliases are written directly to your `.zshrc` under a `# cmdwatch aliases` section, activated immediately in the current session, and the original command runs right away — no need to retype it or open a new terminal.
 
 ---
 
@@ -41,7 +41,7 @@ Aliases are written directly to your `.zshrc` under a `# cmdwatch aliases` secti
 
 | Key | Action |
 |-----|--------|
-| `1`–`9` | Instantly alias to that suggestion |
+| `1`–`9` | Alias to that suggestion and run the command immediately |
 | `a` | Enter a custom expansion |
 | `s` | Skip — keep tracking |
 | `n` | Never ask about this command again |
@@ -57,6 +57,7 @@ cmdwatch add [<cmd> [<expansion>]]  # manually create an alias
 cmdwatch remove <cmd>               # remove an alias and resume tracking
 cmdwatch unignore <cmd>             # resume watching a silenced command
 cmdwatch reset <cmd>                # reset the miss count for a command
+cmdwatch reset-all                  # wipe all aliases, counts, and ignored commands
 cmdwatch help                       # show all subcommands
 ```
 
@@ -81,7 +82,7 @@ All state lives in `~/.cmdwatch/`:
 | File | Contents |
 |------|----------|
 | `count_<cmd>` | Miss count for that command |
-| `ignored` | Commands that will never be prompted about |
+| `ignored` | Commands the user explicitly silenced with `n` |
 
 ---
 
