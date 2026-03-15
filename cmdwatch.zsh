@@ -40,16 +40,29 @@ _cw_bump_count() {
 _cw_is_ignored() { grep -qxF "$1" "$_cw_ignored" 2>/dev/null; }
 _cw_add_ignore()  { echo "$1" >> "$_cw_ignored"; }
 
-# ── Alias writer (prevents duplicates) ────────────────────────────────────────
-# Removes any existing cmdwatch alias for $1 before appending the new one.
+# ── .zshrc backup ─────────────────────────────────────────────────────────────
+# Called before every write. Keeps one backup so the user can always recover.
+_cw_backup_zshrc() {
+    cp -- "$CMDWATCH_ZSHRC" "${CMDWATCH_DIR}/zshrc.bak" 2>/dev/null || true
+}
+
+# ── Alias writer (prevents duplicates, scoped to cmdwatch section) ─────────────
+# Backs up .zshrc, then removes any existing cmdwatch alias for $cmd (only within
+# the # cmdwatch aliases block) before appending the updated line.
 _cw_write_alias() {
     local cmd="$1" expansion="$2"
+    _cw_backup_zshrc
     if ! grep -qF '# cmdwatch aliases' "$CMDWATCH_ZSHRC" 2>/dev/null; then
         printf '\n# cmdwatch aliases\n' >> "$CMDWATCH_ZSHRC"
     fi
-    # Strip any pre-existing line(s) for this command before re-adding
+    # Remove any pre-existing alias for this command — scoped to our section so
+    # we never touch aliases the user wrote themselves elsewhere in their .zshrc.
     local tmp="${CMDWATCH_ZSHRC}.cmdwatch.tmp.$$"
-    grep -v "^alias ${cmd}='" "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
+    awk -v cmd="alias ${cmd}='" '
+        /# cmdwatch aliases/ { in_cw=1 }
+        in_cw && index($0, cmd) == 1 { next }
+        { print }
+    ' "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
         && mv -- "$tmp" "$CMDWATCH_ZSHRC" || rm -f "$tmp"
     printf "alias %s='%s'\n" "$cmd" "$expansion" >> "$CMDWATCH_ZSHRC"
 }
@@ -392,9 +405,14 @@ cmdwatch() {
                 return 1
             fi
 
-            # Remove from .zshrc (matches lines like: alias cmd='...')
-            local tmp="${CMDWATCH_ZSHRC}.cmdwatch.tmp"
-            grep -v "^alias ${cmd}='" "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
+            # Remove from .zshrc — backup first, then remove scoped to our section
+            _cw_backup_zshrc
+            local tmp="${CMDWATCH_ZSHRC}.cmdwatch.tmp.$$"
+            awk -v cmd="alias ${cmd}='" '
+                /# cmdwatch aliases/ { in_cw=1 }
+                in_cw && index($0, cmd) == 1 { next }
+                { print }
+            ' "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
                 && mv -- "$tmp" "$CMDWATCH_ZSHRC" \
                 || rm -f "$tmp"
 
@@ -424,23 +442,29 @@ cmdwatch() {
                 return 0
             fi
 
-            # Unalias everything from the cmdwatch section in .zshrc
+            # Backup before touching anything
+            _cw_backup_zshrc
+
+            # Read the exact alias lines we wrote so we remove only those
+            local -a cw_alias_lines
             local line aname
             while IFS= read -r line; do
+                [[ -n "$line" ]] && cw_alias_lines+=("$line")
                 aname="${line#alias }"; aname="${aname%%=*}"
                 unalias "$aname" 2>/dev/null || true
             done < <(awk '/# cmdwatch aliases/{found=1; next} found && /^alias /{print}' "$CMDWATCH_ZSHRC" 2>/dev/null)
 
-            # Remove the cmdwatch aliases section from .zshrc
+            # Remove only the exact lines we know we wrote (header + each alias).
+            # grep -vxFf matches whole lines exactly — nothing else in .zshrc is touched.
             local tmp="${CMDWATCH_ZSHRC}.cmdwatch.tmp.$$"
-            awk '/# cmdwatch aliases/{found=1} found && /^$/{found=0; next} !found' \
-                "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
+            { printf '# cmdwatch aliases\n'; printf '%s\n' "${cw_alias_lines[@]}"; } \
+                | grep -vxFf - "$CMDWATCH_ZSHRC" > "$tmp" 2>/dev/null \
                 && mv -- "$tmp" "$CMDWATCH_ZSHRC" || rm -f "$tmp"
 
             # Wipe the state directory
             rm -f "${CMDWATCH_DIR}"/count_* "$_cw_ignored"
 
-            printf '  \e[1;32m✓\e[0m  All cmdwatch data cleared.\n\n'
+            printf '  \e[1;32m✓\e[0m  All cmdwatch data cleared. Backup saved to %s/zshrc.bak\n\n' "$CMDWATCH_DIR"
             ;;
 
         help|--help|-h|h)
