@@ -137,6 +137,20 @@ _cw_ordinal() {
     esac
 }
 
+# ── Alias activation ──────────────────────────────────────────────────────────
+_cw_activate_alias() {
+    alias "${1}=${2}"
+}
+
+_cw_print_activation_status() {
+    local cmd="$1"
+    if [[ -n "${aliases[$cmd]}" ]]; then
+        printf '  \e[2mSaved to %s · active right now.\e[0m\n\n' "$CMDWATCH_ZSHRC"
+    else
+        printf '  \e[2mSaved to %s · run \e[0m\e[1msource ~/.zshrc\e[0m\e[2m to activate.\e[0m\n\n' "$CMDWATCH_ZSHRC"
+    fi
+}
+
 # ── UI ────────────────────────────────────────────────────────────────────────
 _cw_show_ui() {
     local cmd="$1" count="$2"
@@ -209,13 +223,11 @@ _cw_alias_wizard() {
     fi
 
     _cw_write_alias "$cmd" "$expansion"
-
-    # Activate in the current session immediately
-    aliases[$cmd]="$expansion"
+    _cw_activate_alias "$cmd" "$expansion"
     _cw_run_expansion="$run_expansion"
 
     printf '\n  \e[1;32m✓\e[0m  \e[1malias %s='"'"'%s'"'"'\e[0m\n' "$cmd" "$expansion" >/dev/tty
-    printf '  \e[2mSaved to %s · active right now.\e[0m\n\n' "$CMDWATCH_ZSHRC" >/dev/tty
+    _cw_print_activation_status "$cmd" >/dev/tty
 }
 
 # ── Main handler ──────────────────────────────────────────────────────────────
@@ -281,10 +293,10 @@ command_not_found_handler() {
                     alias_expansion="${expansion% ${orig_args}}"
                 printf '\n' >/dev/tty
                 _cw_write_alias "$cmd" "$alias_expansion"
-                aliases[$cmd]="$alias_expansion"
+                _cw_activate_alias "$cmd" "$alias_expansion"
                 _cw_run_expansion="$expansion"   # auto-run uses the full original invocation
                 printf '  \e[1;32m✓\e[0m  \e[1malias %s='"'"'%s'"'"'\e[0m\n' "$cmd" "$alias_expansion" >/dev/tty
-                printf '  \e[2mSaved to %s · active right now.\e[0m\n\n' "$CMDWATCH_ZSHRC" >/dev/tty
+                _cw_print_activation_status "$cmd" >/dev/tty
             else
                 printf '\n  \e[2m(skipped)\e[0m\n\n' >/dev/tty
             fi
@@ -319,12 +331,12 @@ cmdwatch() {
 
             # Aliases created — also sync any missing entries into the ignore list
             printf '  \e[1mAliases created\e[0m\n'
-            local aliases
-            aliases=$(awk '/# cmdwatch aliases/{found=1; next} found && /^alias /{print}' "$CMDWATCH_ZSHRC" 2>/dev/null)
-            if [[ -n "$aliases" ]]; then
+            local cw_aliases_block
+            cw_aliases_block=$(awk '/# cmdwatch aliases/{found=1; next} found && /^alias /{print}' "$CMDWATCH_ZSHRC" 2>/dev/null)
+            if [[ -n "$cw_aliases_block" ]]; then
                 while IFS= read -r line; do
                     printf '  \e[32m✓\e[0m  \e[1m%s\e[0m\n' "$line"
-                done <<< "$aliases"
+                done <<< "$cw_aliases_block"
             else
                 printf '  \e[2m  none yet\e[0m\n'
             fi
